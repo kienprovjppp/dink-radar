@@ -93,6 +93,8 @@ def main():
             dists.append(min(np.hypot(*(L[15, :2] - b)), np.hypot(*(L[16, :2] - b)),
                              1.3 * np.hypot(*(L[0, :2] - b))))
         p = int(np.argmin(dists))
+        if strikes[k].get("player"):  # hitter confirmed by looking at the footage
+            p = int(strikes[k]["player"][1:]) - 1
         if k < len(over) and over[k] not in ("-", ""):
             p = int(over[k][1:]) - 1
         hitters.append(p)
@@ -102,7 +104,20 @@ def main():
     By = np.array([np.nan if v is None else v[1] for v in B[:n]])
     bounces = []
     flights = list(zip(sframes, sframes[1:] + [end]))
-    for k, (f0, f1) in enumerate(flights):
+    given = load(a.strikes).get("bounces")
+    for f in given or []:  # bounces confirmed on the footage: the ball is on the ground there
+        xy = None
+        if isinstance(f, list):  # [frame, x, y] when the ball was hidden at the bounce
+            f, xy = f[0], np.array(f[1:], float)
+        k = max([j for j, s0 in enumerate(sframes) if s0 <= f], default=None)
+        b = xy if xy is not None else bpos(f, 4)
+        if k is None or b is None:
+            continue
+        g = project(H, b)
+        bounces.append({"frame": int(f), "flight": k, "img": [round(b[0], 1), round(b[1], 1)],
+                        "court": [round(float(g[0]), 2), round(float(g[1]), 2)],
+                        "in": bool(0 <= g[0] <= Wc and 0 <= g[1] <= Lc)})
+    for k, (f0, f1) in enumerate(flights if given is None else []):
         towards = team_of(hitters[k]) == 1  # far team hits -> ball comes towards the camera
         lo, hi = f0 + 6, f1 - 3
         if hi - lo < 6:
@@ -137,7 +152,9 @@ def main():
             bounces.append({"frame": int(f), "flight": k, "img": [round(Bx[f], 1), round(By[f], 1)],
                             "court": [round(float(g[0]), 2), round(float(g[1]), 2)],
                             "in": bool(0 <= g[0] <= Wc and 0 <= g[1] <= Lc)})
-    bounce_in_flight = {b["flight"]: b for b in bounces}
+    bounce_in_flight = {}
+    for b in sorted(bounces, key=lambda b: b["frame"]):
+        bounce_in_flight.setdefault(b["flight"], b)
 
     # ---------------- speeds, types, directions
     out_strikes = []
@@ -251,8 +268,9 @@ def main():
         if shot_sc:
             parts["shots"] = float(np.mean(shot_sc))
         # stance
-        kn = knee[p, rally]
-        wu = wrist_up[p, rally]
+        det = pz["ok"][p, :n][rally]  # stance only from frames where the pose was actually found
+        kn = knee[p, rally][det]
+        wu = wrist_up[p, rally][det]
         mk = float(np.nanmedian(kn))
         mw = float(np.nanmedian(wu))
         parts["stance"] = 0.6 * clamp((178 - mk) * 5) + 0.4 * clamp(mw / 0.625 * 100)
@@ -310,7 +328,8 @@ def main():
                  for p in range(P)],
         "feet": [[[round(float(v[0]), 2), round(float(v[1]), 2)] for v in feet_s[p]] for p in range(P)],
         "dnet": [[round(float(v), 2) for v in dnet[p]] for p in range(P)],
-        "knee": [[None if np.isnan(v) else int(round(v)) for v in knee[p]] for p in range(P)],
+        "knee": [[None if (np.isnan(v) or not pz["ok"][p, i]) else int(round(v)) for i, v in enumerate(knee[p])]
+                 for p in range(P)],
         "zone": [[zone(v) for v in dnet[p]] for p in range(P)],
         "det": [[int(v) for v in pz["ok"][p, :n]] for p in range(P)],
         "speed": live,
@@ -320,7 +339,7 @@ def main():
     res = {
         "court": {"kind": kind, "W": Wc, "L": Lc, "K": K, "corners": court["corners"], "H": court["H"],
                   "Hinv": court["Hinv"], "horizon_y": court["horizon_y"],
-                  "stature_ratio": round(stature_ratio, 4)},
+                  "stature_ratio": round(stature_ratio, 4), "img_w": court["width"], "img_h": court["height"]},
         "range": {"start": int(start), "end": int(end), "frames": int(n)},
         "strikes": out_strikes, "bounces": bounces, "players": players, "series": series,
         "sample": {"strikes": len(out_strikes), "seconds": round((end - start) / FPS, 2)},

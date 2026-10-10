@@ -100,9 +100,10 @@ def cmd_merge(a):
                 if dn < best[0]:
                     best = (dn, p)
             near = best
-        vb = vy_window(track, f, -10, -2)
-        va = vy_window(track, f, 2, 10)
-        rev = vb is not None and va is not None and np.sign(vb) != np.sign(va) and abs(vb - va) > 1.0
+        k = a.fps / 60.0
+        vb = vy_window(track, f, -round(10 * k), -max(1, round(2 * k)))
+        va = vy_window(track, f, max(1, round(2 * k)), round(10 * k))
+        rev = vb is not None and va is not None and np.sign(vb) != np.sign(va) and abs(vb - va) > 1.0 * 60 / a.fps
         ring = any(abs(r["strike_frame"] - f) <= 4 for r in rings)
         rows.append(dict(frame=f, t=hgt["t"], energy=hgt["energy"], near=near, rev=rev, ring=ring, vb=vb, va=va))
 
@@ -127,9 +128,9 @@ def cmd_merge(a):
             last_team = team
     for r in rings:  # rings without an audio peak still count; ring start + 3 is the strike
         if not any(abs(s["frame"] - r["strike_frame"]) <= 4 for s in strikes) and r["strike_frame"] not in drop:
-            strikes.append({"frame": r["strike_frame"], "t": round(r["strike_frame"] / 60, 3), "src": "ring"})
+            strikes.append({"frame": r["strike_frame"], "t": round(r["strike_frame"] / a.fps, 3), "src": "ring"})
     for f in (int(v) for v in a.add.split(",")) if a.add else []:
-        strikes.append({"frame": f, "t": round(f / 60, 3), "src": "manual"})
+        strikes.append({"frame": f, "t": round(f / a.fps, 3), "src": "manual"})
     strikes.sort(key=lambda s: s["frame"])
     save(a.out, {"strikes": strikes}, indent=1)
     print(f"{len(strikes)} strikes: {[s['frame'] for s in strikes]}")
@@ -148,6 +149,7 @@ def main():
     m.add_argument("out"); m.add_argument("--rings"); m.add_argument("--add"); m.add_argument("--drop")
     m.add_argument("--first", type=int); m.add_argument("--last", type=int)
     m.add_argument("--hand", type=float, default=0.9, help="max ball-to-hand distance in player heights")
+    m.add_argument("--fps", type=float, default=60.0, help="frame rate of the frames the tracks use")
     a = ap.parse_args()
     {"rings": cmd_rings, "merge": cmd_merge}[a.cmd](a)
 

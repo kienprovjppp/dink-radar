@@ -37,19 +37,34 @@ def radial_profile(gray, x, y, rmax=14):
     return np.array(prof)
 
 
+def channel(fr, chan):
+    """gray, or 'yellow' = (R+G)/2 - B, which separates the ball from both the
+    dark floor and the blue court."""
+    if chan == "yellow":
+        b, g, r = [fr[..., k].astype(np.float32) for k in range(3)]
+        return np.clip((r + g) / 2 - b + 128, 0, 255)
+    return cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+
 def cmd_profile(a):
     out = []
     for item in a.known.split():
         f, x, y = [float(v) for v in item.split(",")]
         fr = read_frame(a.video, int(f))
-        gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
-        p = radial_profile(gray, x, y)
-        # darkest radius beyond the bright core
-        r = int(np.nanargmin(p[2:]) + 2)
+        p = radial_profile(channel(fr, a.chan), x, y)
+        # darkest radius beyond the bright core; if the profile only falls to the
+        # background (no dark rim), the edge is where it gets within 15% of it
+        dark = int(np.nanargmin(p[2:]) + 2)
+        bgv = np.nanmedian(p[-4:])
+        edge = int(np.argmax(p - bgv <= 0.15 * (p[0] - bgv)))
+        has_rim = p[dark] < bgv - 0.1 * (p[0] - bgv)
+        r = dark if has_rim else edge
         out.append({"frame": int(f), "x": x, "y": y, "rim": r, "profile": np.round(p, 1).tolist()})
-        print(f"frame {int(f)} ({x:.0f},{y:.0f}) darkest r={r}  profile: " +
-              " ".join(f"{v:.0f}" for v in p))
+        print(f"frame {int(f)} ({x:.0f},{y:.0f}) darkest r={dark} edge r={edge} dark rim={'yes' if has_rim else 'no'}"
+              f" -> r={r}  profile: " + " ".join(f"{v:.0f}" for v in p))
     print("rim spec: --rim \"" + ",".join(f"{o['y']:.0f}:{o['rim']}" for o in out) + "\"")
+    cons = [o["profile"][0] - np.mean(o["profile"][o["rim"] - 1:o["rim"] + 2]) for o in out]
+    print(f"reference contrast (core - rim): {np.round(cons, 1).tolist()} -> --cref {np.mean(cons):.0f}")
 
 
 # ---------------------------------------------------------------- candidates
@@ -60,7 +75,7 @@ def parse_rim(spec):
     return lambda y: float(np.interp(y, ys, rs)) if len(ys) > 1 else float(rs[0])
 
 
-def ball_mask(hsv, a):
+def ball_mask(hsv, a):  # noqa: D401
     h0, h1 = a.hrange
     return ((hsv[..., 0] >= h0) & (hsv[..., 0] <= h1) & (hsv[..., 1] >= a.s) &
             (hsv[..., 2] >= a.v)).astype(np.uint8) * 255
@@ -93,20 +108,22 @@ def cmd_cands(a):
     for i, fr in read_frames(a.video):
         nfr = i + 1
         hsv = cv2.cvtColor(fr, cv2.COLOR_BGR2HSV)
-        gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
+        gray = channel(fr, a.chan)
         m = ball_mask(hsv, a)
         m[bg_mask > 0] = 0
         m[excl > 0] = 0
+        if a.diff:
+            m[cv2.absdiff(fr, bg).max(axis=2) < a.diff] = 0
         m = cv2.morphologyEx(m, cv2.MORPH_OPEN, k3)
         n, lab, st, cen = cv2.connectedComponentsWithStats(m, 8)
         for j in range(1, n):
             x, y, w, h, area = st[j]
-            if not (6 <= area <= 400):
+            if not (a.amin <= area <= a.amax):
                 continue
             asp = w / max(h, 1)
-            if not (0.4 <= asp <= 2.5):
+            if not (1 / a.aspect <= asp <= a.aspect):
                 continue
-            if area / float(w * h) <= 0.45:
+            if area / float(w * h) <= a.fill:
                 continue
             cx, cy = cen[j]
             con = rim_contrast(gray, cx, cy, rim_of(cy))
@@ -154,8 +171,8 @@ def cmd_solve(a):
 
         if len(cs):
             dist = np.hypot(px[:, None] - cx[None, :], py[:, None] - cy[None, :])
-            gate = 45 + 22 * st["m"][:, None]
-            tc = st["cost"][:, None] + 0.06 * dist + np.where(dist > gate, 60.0, 0.0) + cc[None, :]
+            gate = (45 + 22 * st["m"][:, None]) * a.scale
+            tc = st["cost"][:, None] + 0.06 * dist / a.scale + np.where(dist > gate, 60.0, 0.0) + cc[None, :]
             tc = np.where(live[:, None], tc, np.inf)
             # start a fresh track from the best dead state
             dead = np.where(~live)[0]
@@ -267,7 +284,19 @@ def cmd_smooth(a):
             continue
         span = np.arange(max(s, ti[0]), min(e, ti[-1]) + 1)
         px = PchipInterpolator(ti, xi)(span); py = PchipInterpolator(ti, yi)(span)
+        for t0, t1 in zip(ti[:-1], ti[1:]):  # leave long gaps (ball out of view) empty
+            if t1 - t0 > a.max_gap:
+                px[(span > t0) & (span < t1)] = np.nan; py[(span > t0) & (span < t1)] = np.nan
         X[span] = px; Y[span] = py
+        # reach the strike frames at both ends: extend the flight by up to 3 frames at its own velocity
+        if len(ti) >= 2:
+            for edge, (ta, tb) in ((s, (ti[1], ti[0])), (e, (ti[-2], ti[-1]))):
+                gap = abs(edge - tb)
+                if 0 < gap <= 3:
+                    vx = (X[tb] - X[ta]) / (tb - ta); vy = (Y[tb] - Y[ta]) / (tb - ta)
+                    for g in range(1, gap + 1):
+                        f = tb + g * int(np.sign(edge - tb))
+                        X[f] = X[tb] + vx * (f - tb); Y[f] = Y[tb] + vy * (f - tb)
         print(f"segment {s}-{e}: {len(idx)} obs, dropped {int((~keep).sum())}")
     ok = ~np.isnan(X)
     # Gaussian 1.2 frames inside each continuous run, never across a strike
@@ -285,8 +314,8 @@ def cmd_smooth(a):
         runs.append(cur)
     for r in runs:
         r = np.array(r)
-        gx = gaussian_filter1d(X[r], 1.2, mode="nearest") if len(r) > 3 else X[r]
-        gy = gaussian_filter1d(Y[r], 1.2, mode="nearest") if len(r) > 3 else Y[r]
+        gx = gaussian_filter1d(X[r], a.sigma, mode="nearest") if len(r) > 3 else X[r]
+        gy = gaussian_filter1d(Y[r], a.sigma, mode="nearest") if len(r) > 3 else Y[r]
         for k, i in enumerate(r):
             out[i] = [round(float(gx[k]), 1), round(float(gy[k]), 1)]
     save(a.out, {"frames": n, "start": int(start), "end": int(end), "ball": out})
@@ -329,13 +358,22 @@ def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("profile"); p.add_argument("video"); p.add_argument("--known", required=True)
+    p.add_argument("--chan", default="gray", choices=["gray", "yellow"])
     c = sub.add_parser("cands"); c.add_argument("video"); c.add_argument("bg"); c.add_argument("out")
     c.add_argument("--rim", required=True); c.add_argument("--cref", type=float, default=40.0)
     c.add_argument("--h", default="5,45"); c.add_argument("--s", type=int, default=80)
     c.add_argument("--v", type=int, default=110); c.add_argument("--exclude", help='"x,y,w,h x,y,w,h"')
+    c.add_argument("--chan", default="gray", choices=["gray", "yellow"])
+    c.add_argument("--diff", type=int, default=0, help="also require this much change against the background")
+    c.add_argument("--amin", type=int, default=6); c.add_argument("--amax", type=int, default=400)
+    c.add_argument("--aspect", type=float, default=2.5); c.add_argument("--fill", type=float, default=0.45)
     s = sub.add_parser("solve"); s.add_argument("cands"); s.add_argument("out"); s.add_argument("--anchors")
+    s.add_argument("--scale", type=float, default=1.0,
+                   help="pixel distances per frame relative to 60 fps footage (2 for 30 fps)")
     m = sub.add_parser("smooth"); m.add_argument("raw"); m.add_argument("strikes"); m.add_argument("out")
     m.add_argument("--anchors"); m.add_argument("--end", type=int)
+    m.add_argument("--sigma", type=float, default=1.2, help="Gaussian in frames (1.2 at 60 fps)")
+    m.add_argument("--max-gap", type=int, default=12, help="longest gap (frames) bridged by interpolation")
     k = sub.add_parser("check"); k.add_argument("video"); k.add_argument("ball"); k.add_argument("out")
     k.add_argument("--frame", type=int, default=0)
     a = ap.parse_args()

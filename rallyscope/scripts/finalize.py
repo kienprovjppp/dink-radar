@@ -63,11 +63,14 @@ def cmd_build(a):
     for s in prep["strikes"]:
         s["line"] = texts["strike_lines"].get(str(s["n"]), "")
     data = {
-        "meta": {"name": a.name or texts["title"], "fps": FPS, "width": w, "height": h,
+        # width/height are the analysis frame size: every pixel coordinate in the data uses it
+        "meta": {"name": a.name or texts["title"], "fps": FPS, "width": prep["court"]["img_w"],
+                 "height": prep["court"]["img_h"], "video_size": [w, h],
                  "duration": round(dur, 3), "frames": prep["range"]["frames"], "endcard": 5.0,
                  "cover": texts.get("cover")},
         "report": {"title": texts["title"], "headline": texts["headline"], "verdict": texts["verdict"],
-                   "limits": texts["limits"], "sample": prep["sample"], "advice": texts.get("advice", "")},
+                   "limits": texts["limits"], "sample": prep["sample"], "advice": texts.get("advice", ""),
+                   "intro": texts.get("intro", "")},
         **{k: prep[k] for k in ("court", "range", "strikes", "bounces", "players", "series")},
     }
     save(a.out, data)

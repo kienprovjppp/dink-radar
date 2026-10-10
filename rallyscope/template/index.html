@@ -109,16 +109,16 @@ body.rec #wrap{width:1920px;height:1080px}
 #end .hl em{font-style:normal;color:var(--amber)}
 #end .vd{margin-top:10px;font:400 20px/1.45 var(--f-body);color:var(--ink-2);max-width:1600px}
 #cards{margin-top:24px;display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
-.card{background:var(--panel);border:1px solid var(--line-2);padding:18px 20px 20px;position:relative;min-height:690px}
+.card{background:var(--panel);border:1px solid var(--line-2);padding:18px 20px 20px;position:relative;min-height:640px}
 .card .top{display:flex;align-items:center;gap:12px}
 .card .top .id{font:700 30px/1 var(--f-display)}
 .card .top .pos{font:500 12px/1.3 var(--f-mono);color:var(--ink-3);letter-spacing:.1em;text-transform:uppercase}
 .card .top .tot{margin-left:auto;text-align:right}
 .card .top .tot b{font:700 48px/1 var(--f-display);font-variant-numeric:tabular-nums}
 .card .top .tot span{display:block;font:500 11px/1 var(--f-mono);color:var(--ink-3);letter-spacing:.14em;margin-top:4px}
-.card .badge{position:absolute;right:-1px;top:-14px;font:700 12px/1 var(--f-display);letter-spacing:.16em;color:#04080F;background:var(--amber);padding:6px 10px 5px}
+.card .badge{display:inline-block;margin:0 0 12px;font:700 12px/1 var(--f-display);letter-spacing:.16em;color:#04080F;background:var(--amber);padding:6px 10px 5px}
 .bars{margin-top:16px;display:grid;gap:9px}
-.bar{display:grid;grid-template-columns:118px 1fr 38px;align-items:center;gap:10px;font:500 12px/1 var(--f-mono);color:var(--ink-2);letter-spacing:.06em}
+.bar{display:grid;grid-template-columns:150px 1fr 38px;align-items:center;gap:10px;font:500 12px/1 var(--f-mono);color:var(--ink-2);letter-spacing:.04em;white-space:nowrap}
 .bar .tr{height:8px;background:var(--line)}
 .bar .tr i{display:block;height:100%}
 .bar b{text-align:right;color:var(--ink);font-weight:600}
@@ -338,7 +338,7 @@ function buildEnd() {
   $("endhl").innerHTML = D.report.headline;
   $("endvd").textContent = D.report.verdict;
   $("cards").innerHTML = D.players.map((p, i) => `<div class="card cut" data-at="${0.5 + i * 0.35}" style="border-top:3px solid ${PCOL[i]}">
-    ${p.id === best.id ? '<div class="badge">MOST PROFESSIONAL</div>' : ""}
+    <div class="badge" style="visibility:${p.id === best.id ? "visible" : "hidden"}">MOST PROFESSIONAL</div>
     <div class="top"><span class="id" style="color:${PCOL[i]}">${p.id}</span><span class="pos">${PPOS[i]}<br>${p.strikes} strikes</span>
       <span class="tot"><b style="color:${PCOL[i]}">${Math.round(p.total)}</b><span>TOTAL / 100</span></span></div>
     <div class="bars">${PART.map(([k, lab, w]) => `<div class="bar"><span>${lab} ${w}%</span><span class="tr"><i data-w="${p.parts[k] ?? 0}" style="background:${PCOL[i]};width:0"></i></span><b class="num">${p.parts[k] == null ? "—" : Math.round(p.parts[k])}</b></div>`).join("")}</div>
@@ -351,7 +351,7 @@ function buildEnd() {
 function drawStage(f) {
   g.save();
   g.fillStyle = "#04080F"; g.fillRect(0, 0, SW, SH);
-  g.filter = "saturate(.6) contrast(1.12) brightness(.8)";
+  g.filter = "saturate(.62) contrast(1.1) brightness(.9)";
   if (vid.readyState >= 2) g.drawImage(vid, OX, OY, SW - 2 * OX, SH - 2 * OY);
   g.filter = "none";
   g.globalCompositeOperation = "multiply"; g.fillStyle = "#93BEE6"; g.fillRect(0, 0, SW, SH);
@@ -388,7 +388,7 @@ function drawCourt(f) {
   g.shadowBlur = 0; g.strokeStyle = "rgba(190,245,255,.85)"; g.lineWidth = 1.4; g.stroke(lines);
   // amber net
   const ng = g.createLinearGradient(0, net.a[1], 0, Math.min(net.ta[1], net.tb[1]));
-  ng.addColorStop(0, "rgba(255,200,87,.04)"); ng.addColorStop(1, "rgba(255,200,87,.22)");
+  ng.addColorStop(0, "rgba(255,200,87,.02)"); ng.addColorStop(1, "rgba(255,200,87,.11)");
   g.fillStyle = ng; g.beginPath(); g.moveTo(...net.a); g.lineTo(...net.b); g.lineTo(...net.tb); g.lineTo(...net.ta); g.closePath(); g.fill();
   g.shadowColor = "#FFC857"; g.shadowBlur = 12; g.strokeStyle = "rgba(255,200,87,.95)"; g.lineWidth = 2.2;
   g.beginPath(); g.moveTo(...net.ta); g.lineTo(...net.tb); g.stroke();
@@ -425,6 +425,9 @@ function drawPlayers(f) {
   for (let i = 0; i < D.players.length; i++) {
     const pose = D.series.pose[i][f]; if (!pose) continue;
     const col = PCOL[i], rgb = hex2rgb(col);
+    // a pose that was not found for a while is not drawn: only the ring at the estimated feet
+    let gone = 0; for (let j = f - 8; j <= f + 8; j++) if (j >= 0 && j < NF && !D.series.det[i][j]) gone++;
+    const lost = !D.series.det[i][f] && gone >= 10;
     const feet = D.series.feet[i][f];
     // floor ring
     g.save(); g.globalCompositeOperation = "lighter";
@@ -436,6 +439,12 @@ function drawPlayers(f) {
     g.restore();
     // skeleton
     const P = pose.map(p => p && st(p));
+    if (lost) {
+      const fp = c2s(feet), hh = Math.hypot(P[1][0] - P[11][0], P[1][1] - P[11][1]) || 120;
+      tags.push({i, col, rgb, ax: fp[0], ay: fp[1] - hh, w: 168, h: 44, x: fp[0] - 84, y: fp[1] - hh - 56,
+        l1: `${D.players[i].id}  POSE LOST`, l2: `NET ${D.series.dnet[i][f].toFixed(1)} m · estimated`});
+      continue;
+    }
     g.save(); g.lineCap = "round"; g.lineJoin = "round";
     g.shadowColor = col; g.shadowBlur = 12; g.strokeStyle = rgba(rgb, 0.9); g.lineWidth = 3.4;
     g.beginPath(); for (const [a, b] of EDGES) if (P[a] && P[b]) { g.moveTo(...P[a]); g.lineTo(...P[b]); }
@@ -542,7 +551,9 @@ function drawStrikeFx(f, tags) {
       }
       g.restore();
     }
-    // callout
+    // callout (only the latest strike keeps one, so close strikes never stack)
+    const next = D.strikes.find(o => o.frame > s.frame);
+    if (next && f >= next.frame) continue;
     const a = Math.min(1, k / 6) * Math.min(1, (80 - k) / 12);
     const w = 236, h = 74;
     const right = p[0] < SW / 2;
