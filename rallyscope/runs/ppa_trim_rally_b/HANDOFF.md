@@ -15,6 +15,23 @@
 | 7. Điểm | P1 83 · P2 73 · P4 62 · P3 62 | `prep.json` |
 | 8. Trang | Lớp phủ, bảng bên phải, timeline, thẻ báo cáo cuối, báo cáo viết tiếng Việt | `page/`, `texts.json` |
 
+## Đang làm dở: nút tải video lên + nút bật/tắt lớp phủ (CHƯA TEST XONG)
+
+Đã có trong `rallyscope/template/index.html`. Trang công khai (link ở trên) **vẫn là bản 1** và chưa có hai tính năng này.
+
+- **Bật/tắt lớp phủ**: 4 nút (Khung xương, Đường bóng, Bảng tên, Mặt sân) và nút Tắt hết / Bật hết; lựa chọn được nhớ trong trình duyệt. Đã chụp màn hình thấy nút hiện đúng, nhưng chưa bấm thử từng nút.
+- **Tải video lên** (phân tích ngay trong trình duyệt, video không gửi đi đâu): mở video, dựng ảnh nền, tự tìm sân, màn hình kiểm tra 4 góc sân và chọn đoạn (Từ/Đến), tải MediaPipe, tìm 4 người, theo dõi người + bóng từng frame (có xem trước trực tiếp), tiếng vợt, cú đánh, nảy, tốc độ, điểm, nhận xét tự động. Có thêm nút "Viết lại nhận xét bằng Claude" (capability `sample`).
+- **Đã kiểm tra** (Chromium headless, clip 9 giây của rally B dạng webm): trang mẫu vẫn chạy, tự tìm sân đúng 4 góc, 4 khung xương bám đúng người trong màn hình xem trước. Test dừng ở 76% bước theo dõi theo yêu cầu.
+- **Chưa kiểm tra**: phần sau bước theo dõi (ghép đường bóng, phát hiện cú đánh tự động, chấm điểm, nạp kết quả vào màn hình), nút "Viết lại nhận xét bằng Claude", nút "Xem rally mẫu", trình duyệt thật có GPU, video H.264.
+
+### Việc còn lại theo thứ tự
+
+1. Chạy lại test đầy đủ: `node rallyscope/tests/upload_test.mjs <site> test9.webm out` (cách dựng thư mục `site` ghi ở đầu file), đọc `out_summary.json` và các ảnh `out_t*.png`, sửa lỗi nếu có.
+2. So kết quả tự động với 16 cú đã kiểm chứng của rally B (`strikes_nat.json`) để biết độ chính xác của bước phát hiện cú đánh tự động.
+3. Bấm thử từng nút lớp phủ và nút "Xem rally mẫu".
+4. Đăng lại Artifact cùng link: bỏ thẻ skeleton, gửi kèm `mp/pose_model.wasm`, `mp/vision_wasm_internal.wasm` và khai báo `capabilities: {sample: {}}` (xem `CLAUDE.md`).
+5. Nhờ Kien thử trên Chrome/Edge máy Legion với một video MP4 thật.
+
 ## Chưa làm (dừng theo yêu cầu)
 
 1. **Quay video MP4 60 fps** (bước 8):
